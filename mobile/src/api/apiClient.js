@@ -19,7 +19,7 @@ const getBaseUrl = () => {
   }
 
   // Fallback to laptop's Wi-Fi LAN IP (reachable by physical phone on same network)
-  return 'http://192.168.1.25:5000/api';
+  return 'http://172.19.84.127:5000/api';
 };
 
 const BASE_URL = getBaseUrl();

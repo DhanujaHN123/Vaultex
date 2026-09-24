@@ -5,6 +5,7 @@ import { COLORS } from '../../theme/colors';
 import TransactionItem from '../../components/TransactionItem';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
+import FinancialInsightsCard from '../../components/FinancialInsightsCard';
 import { userService } from '../../api/services/userService';
 import { transactionService } from '../../api/services/transactionService';
 import useStore from '../../store/useStore';
@@ -20,6 +21,7 @@ const QuickAction = ({ icon, label, onPress, color }) => (
 const DashboardScreen = ({ navigation }) => {
   const { user, logout, setUser, setAccount, updateBalance } = useStore();
   const [transactions, setTransactions] = useState([]);
+  const [allTransactions, setAllTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showBalance, setShowBalance] = useState(true);
@@ -28,13 +30,15 @@ const DashboardScreen = ({ navigation }) => {
     try {
       const [profileRes, txRes] = await Promise.all([
         userService.getProfile(),
-        transactionService.getTransactions({ limit: 5 }),
+        transactionService.getTransactions({ limit: 50 }),
       ]);
       const { user: u, account } = profileRes.data.data;
       setUser(u);
       setAccount(account);
       if (account) updateBalance(account.balance);
-      setTransactions(txRes.data.data.transactions || []);
+      const txns = txRes.data.data.transactions || [];
+      setAllTransactions(txns);
+      setTransactions(txns.slice(0, 5));
     } catch (e) {
       console.log('Dashboard fetch error:', e.message);
     } finally {
@@ -104,6 +108,9 @@ const DashboardScreen = ({ navigation }) => {
             <QuickAction icon="🏦" label="Loans" onPress={() => navigation.navigate('Loans')} color="#EF4444" />
           </View>
         </View>
+
+        {/* VaultX AI Financial Insights */}
+        <FinancialInsightsCard transactions={allTransactions} currentUserId={user?._id} />
 
         {/* Recent Transactions */}
         <View style={styles.section}>
