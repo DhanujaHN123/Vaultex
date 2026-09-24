@@ -1,3 +1,4 @@
+const bcrypt = require('bcryptjs');
 const Bill = require('../models/Bill');
 const User = require('../models/User');
 const Account = require('../models/Account');
@@ -27,12 +28,30 @@ const addBill = async (req, res) => {
 
 const payBill = async (req, res) => {
   try {
+    const { pin } = req.body;
+
+    // Existing ownership + double-payment guards (unchanged)
     const bill = await Bill.findOne({ _id: req.params.id, userId: req.user._id });
     if (!bill) return errorResponse(res, 'Bill not found.', 404);
     if (bill.status === 'paid') return errorResponse(res, 'Bill already paid.', 400);
 
-    const user = await User.findById(req.user._id);
+    // Fetch user WITH +pin so we can verify the submitted PIN against the bcrypt hash
+    const user = await User.findById(req.user._id).select('+pin');
     if (user.balance < bill.amount) return errorResponse(res, 'Insufficient balance.', 400);
+
+    // --- PIN verification (backend-enforced) ---
+    // Must succeed before any balance change or transaction record is created.
+    if (!pin) {
+      return errorResponse(res, 'PIN is required to authorise this payment.', 400);
+    }
+    if (!user.pin) {
+      return errorResponse(res, 'Account PIN not set. Please complete account setup.', 400);
+    }
+    const isPinValid = await bcrypt.compare(String(pin), user.pin);
+    if (!isPinValid) {
+      return errorResponse(res, 'Incorrect PIN. Payment has been cancelled.', 401);
+    }
+    // --- End PIN verification ---
 
     user.balance -= bill.amount;
     await user.save();

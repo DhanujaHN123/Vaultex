@@ -66,7 +66,7 @@ const SendMoneyScreen = ({ navigation }) => {
     setSendLoading(true);
     setPinError('');
     try {
-      const res = await transactionService.sendMoney(mobile, parseFloat(amount), note);
+      const res = await transactionService.sendMoney(mobile, parseFloat(amount), note, pinVal);
       const { senderBalance, receiver: recv, transactionId } = res.data.data;
       updateBalance(senderBalance);
       setPinModal(false);

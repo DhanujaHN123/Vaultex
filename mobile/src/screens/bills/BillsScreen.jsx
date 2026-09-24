@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, StatusBar, Alert, FlatList } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, StatusBar, Alert, FlatList, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../../theme/colors';
 import Button from '../../components/Button';
@@ -7,6 +7,7 @@ import Input from '../../components/Input';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import ErrorMessage from '../../components/ErrorMessage';
 import EmptyState from '../../components/EmptyState';
+import PINPad from '../../components/PINPad';
 import { billService } from '../../api/services/billService';
 import useStore from '../../store/useStore';
 import { formatCurrency, formatDate, getCategoryIcon } from '../../utils/formatters';
@@ -31,6 +32,11 @@ const BillsScreen = ({ navigation }) => {
   const [formErrors, setFormErrors] = useState({});
   const [addLoading, setAddLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [pinModal, setPinModal] = useState(false);
+  const [selectedBill, setSelectedBill] = useState(null);
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [payLoading, setPayLoading] = useState(false);
 
   useEffect(() => { fetchBills(); }, []);
 
@@ -47,23 +53,56 @@ const BillsScreen = ({ navigation }) => {
     }
   };
 
-  const handlePayBill = async (bill) => {
-    Alert.alert('Pay Bill', `Pay ${formatCurrency(bill.amount)} for ${bill.provider}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Pay Now', onPress: async () => {
-        setPayingId(bill._id);
-        try {
-          const res = await billService.payBill(bill._id);
-          updateBalance(res.data.data.newBalance);
-          fetchBills();
-          Alert.alert('✅ Success', 'Bill paid successfully!');
-        } catch (e) {
-          Alert.alert('❌ Failed', e.response?.data?.message || 'Payment failed.');
-        } finally {
-          setPayingId(null);
-        }
-      }}
-    ]);
+  const handlePayBill = (bill) => {
+    if (bill.status === 'paid') return;
+    if (user?.balance !== undefined && user.balance < bill.amount) {
+      Alert.alert('Insufficient Balance', 'You do not have enough balance to pay this bill.');
+      return;
+    }
+    setSelectedBill(bill);
+    setPin('');
+    setPinError('');
+    setPinModal(true);
+  };
+
+  const handlePinChange = async (val) => {
+    setPin(val);
+    setPinError('');
+    if (val.length === 4) {
+      await executePayment(val);
+    }
+  };
+
+  const executePayment = async (pinVal) => {
+    if (!selectedBill) return;
+    setPayLoading(true);
+    setPayingId(selectedBill._id);
+    setPinError('');
+    try {
+      const res = await billService.payBill(selectedBill._id, pinVal);
+      updateBalance(res.data.data.newBalance);
+      setPinModal(false);
+      setPin('');
+      setSelectedBill(null);
+      await fetchBills();
+      Alert.alert('✅ Success', 'Bill paid successfully!');
+    } catch (e) {
+      const errorMsg = e.response?.data?.message || 'Payment failed. Please try again.';
+      setPinError(errorMsg);
+      setPin('');
+    } finally {
+      setPayLoading(false);
+      setPayingId(null);
+    }
+  };
+
+  const handleClosePinModal = () => {
+    if (!payLoading) {
+      setPinModal(false);
+      setPin('');
+      setPinError('');
+      setSelectedBill(null);
+    }
   };
 
   const handleAddBill = async () => {
@@ -134,7 +173,7 @@ const BillsScreen = ({ navigation }) => {
                   </View>
                   <View style={styles.billRight}>
                     <Text style={styles.billAmount}>{formatCurrency(bill.amount)}</Text>
-                    <TouchableOpacity style={styles.payBtn} onPress={() => handlePayBill(bill)} disabled={payingId === bill._id}>
+                    <TouchableOpacity style={styles.payBtn} onPress={() => handlePayBill(bill)} disabled={payingId === bill._id || payLoading}>
                       <Text style={styles.payBtnText}>{payingId === bill._id ? '...' : 'Pay'}</Text>
                     </TouchableOpacity>
                   </View>
@@ -193,6 +232,41 @@ const BillsScreen = ({ navigation }) => {
         )}
         <View style={{ height: 30 }} />
       </ScrollView>
+
+      {/* PIN Confirmation Modal */}
+      <Modal
+        visible={pinModal}
+        transparent
+        animationType="slide"
+        onRequestClose={handleClosePinModal}
+      >
+        <View style={styles.pinOverlay}>
+          <View style={styles.pinCard}>
+            <Text style={styles.pinTitle}>Confirm with PIN</Text>
+            {selectedBill && (
+              <View style={styles.confirmSummary}>
+                <Text style={styles.confirmAmt}>{formatCurrency(selectedBill.amount)}</Text>
+                <Text style={styles.confirmTo}>for {selectedBill.provider} ({selectedBill.category})</Text>
+              </View>
+            )}
+            <ErrorMessage message={pinError} />
+            {payLoading ? (
+              <View style={{ padding: 30, alignItems: 'center' }}>
+                <Text style={{ color: COLORS.grayText }}>Processing payment...</Text>
+              </View>
+            ) : (
+              <PINPad pin={pin} onPinChange={handlePinChange} maxLength={4} />
+            )}
+            <TouchableOpacity
+              onPress={handleClosePinModal}
+              style={{ alignItems: 'center', marginTop: 12 }}
+              disabled={payLoading}
+            >
+              <Text style={{ color: COLORS.grayText, fontSize: 14 }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -237,6 +311,12 @@ const styles = StyleSheet.create({
   miniCatText: { fontSize: 12, fontWeight: '600', color: COLORS.darkText },
   err: { color: COLORS.error, fontSize: 12, marginBottom: 8 },
   addActions: { flexDirection: 'row', marginTop: 8 },
+  pinOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  pinCard: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 36, alignItems: 'center' },
+  pinTitle: { fontSize: 18, fontWeight: '800', color: COLORS.darkText, marginBottom: 16 },
+  confirmSummary: { alignItems: 'center', marginBottom: 16, backgroundColor: COLORS.background, borderRadius: 12, padding: 16, width: '100%' },
+  confirmAmt: { fontSize: 32, fontWeight: '800', color: COLORS.darkText },
+  confirmTo: { fontSize: 15, color: COLORS.grayText, marginTop: 4 },
 });
 
 export default BillsScreen;

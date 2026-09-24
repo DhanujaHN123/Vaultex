@@ -1,3 +1,4 @@
+const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Account = require('../models/Account');
 const Transaction = require('../models/Transaction');
@@ -12,7 +13,15 @@ const getTransactions = async (req, res) => {
   try {
     const { page = 1, limit = 20, type, category, search, startDate, endDate } = req.query;
     const userId = req.user._id;
-    const query = { $or: [{ senderId: userId }, { receiverId: userId }] };
+    // Role-aware query: sender sees only their outgoing (debit/bill/upi) records;
+    // receiver sees only incoming (credit) records. Prevents both parties from
+    // seeing duplicate entries for the same transfer.
+    const query = {
+      $or: [
+        { senderId: userId, type: { $in: ['debit', 'bill_payment', 'upi_payment'] } },
+        { receiverId: userId, type: 'credit' },
+      ],
+    };
     if (type) query.type = type;
     if (category) query.category = category;
     if (search) query.description = { $regex: search, $options: 'i' };
@@ -38,7 +47,7 @@ const getTransactions = async (req, res) => {
 // POST /api/transactions/send
 const sendMoney = async (req, res) => {
   try {
-    const { receiverMobile, amount, note } = req.body;
+    const { receiverMobile, amount, note, pin } = req.body;
     const parsedAmount = parseFloat(amount);
     if (!receiverMobile || !parsedAmount || parsedAmount <= 0) {
       return errorResponse(res, 'Invalid request. Provide receiver mobile and valid amount.', 400);
@@ -49,6 +58,21 @@ const sendMoney = async (req, res) => {
 
     const sender = await User.findById(req.user._id).select('+pin');
     const receiver = await User.findOne({ mobile: receiverMobile, isVerified: true });
+
+    // --- PIN verification (backend-enforced) ---
+    // PIN must be provided and must match the sender's stored bcrypt hash.
+    // This runs BEFORE any balance change or transaction record is created.
+    if (!pin) {
+      return errorResponse(res, 'PIN is required to authorise this transfer.', 400);
+    }
+    if (!sender.pin) {
+      return errorResponse(res, 'Account PIN not set. Please complete account setup.', 400);
+    }
+    const isPinValid = await bcrypt.compare(String(pin), sender.pin);
+    if (!isPinValid) {
+      return errorResponse(res, 'Incorrect PIN. Transfer has been cancelled.', 401);
+    }
+    // --- End PIN verification ---
 
     if (!receiver) return errorResponse(res, 'Receiver not found. Check the mobile number.', 404);
     if (sender._id.toString() === receiver._id.toString()) {
